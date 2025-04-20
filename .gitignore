@@ -1,0 +1,9 @@
+*
+
+!*/
+
+!.gitignore
+!.gitkeep
+!*.ini
+!*.py
+!*.md
