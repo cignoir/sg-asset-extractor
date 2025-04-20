@@ -13,6 +13,12 @@ Blenderのexeパスはdff→fbx変換したい場合のみ必要です。
 
 実行コマンド: `python extract_clumps.py`
 
+### Requirements
+
+* Pythonライブラリ: `pip install numpy Pillow`
+* BlenderのインストールとDragonFFアドオンの有効化
+* `config.ini` にBlenderのexeパスを設定
+  
 ## dff→fbx変換
 
 実行コマンド: `python convert_dff_to_fbx.py`
@@ -29,9 +35,3 @@ Blenderのexeパスはdff→fbx変換したい場合のみ必要です。
 
 ## StA/StB/StC
 拡張子を .wav に変更
-
-### Requirements
-
-* Pythonライブラリ: `pip install numpy Pillow`
-* BlenderのインストールとDragonFFアドオンの有効化
-* `config.ini` にBlenderのexeパスを設定
