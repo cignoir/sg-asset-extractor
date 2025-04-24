@@ -1,37 +1,21 @@
 # SG Asset Extractor
+## 汎用
+```
+python unpack.py bin/AnimInfo_024.bin bin/Anim_024.bin output/anim
+python unpack.py bin/ClumpInfo_128.bin bin/Clump_128.bin output/clump
+python unpack.py bin/IdTblInfo_002.bin bin/IdTbl_002.bin output/idtbl
+python unpack.py bin/PrtInfo_011.bin bin/Prt_011.bin output/prt
+python unpack.py bin/SEInfo_002.bin bin/SE_002.bin output/se
+python unpack.py bin/TexInfo_193.bin bin/Tex_193.bin output/tex
+python unpack.py bin/WindowInfo_101.bin bin/Window_101.bin output/window
+```
 
-## 共通設定
+## テクスチャ抽出(png)
 
-各種binや出力先ディレクトリのパスを `config.ini` に記述します。
-Blenderのexeパスはdff→fbx変換したい場合のみ必要です。
-
-## テクスチャ抽出
-
-実行コマンド: `python extract_textures.py`
-
-## 3Dモデル(dff)抽出
-
-実行コマンド: `python extract_clumps.py`
-
-### Requirements
+`python unpack_png.py`
+  
+## fbx変換
 
 * Pythonライブラリ: `pip install numpy Pillow`
 * BlenderのインストールとDragonFFアドオンの有効化
-* `config.ini` にBlenderのexeパスを設定
-  
-## dff→fbx変換
-
-実行コマンド: `python convert_dff_to_fbx.py`
-
-## SE抽出
-
-実行コマンド: `python extract_se.py`
-
-* SEはwavとsgtの2種類
-
-## Anim抽出
-
-実行コマンド: `python extract_ame.py`
-
-## StA/StB/StC
-拡張子を .wav に変更
+* `python convert_dff_to_fbx.py "path/to/blender-executable" output/clump output/fbx`
