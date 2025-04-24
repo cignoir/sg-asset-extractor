@@ -1,72 +1,62 @@
 import struct
 import os
 import re
-import configparser
-from config_loader import load_config, get_path_from_config
 
-# 設定読み込み
-CONFIG_FILENAME = 'config.ini'
-config, ini_dir = load_config(CONFIG_FILENAME)
+# === 関数定義 ===
 
-def get_wav_filenames_from_metadata(metadata_path):
+def get_all_filenames_from_metadata(metadata_path):
     """
-    メタデータファイル (バイナリ) から正規表現を使ってWAV/SGTファイル名のリストを抽出する関数。
+    メタデータファイルから全てのファイル名 (.wav および .sgt) を
+    出現順に抽出する関数。
     """
     filenames = []
-    print(f"Extracting filenames from metadata using regex: {metadata_path}")
+    print(f"Extracting all filenames from metadata: {metadata_path}")
     # パターン例: 000_000_00001.wav, 100_011_00047.sgt
-    # 数字の桁数は可変とし、拡張子を .wav または .sgt に限定
     filename_pattern = rb"(\d+_\d+_\d+\.(?:wav|sgt))"
-
     try:
         with open(metadata_path, 'rb') as f_meta:
             metadata_content = f_meta.read()
-            print(f"Read {len(metadata_content)} bytes from metadata file.")
-
+            print(f"Read {len(metadata_content)} bytes.")
             matches = re.findall(filename_pattern, metadata_content)
-
             if matches:
-                print(f"Found {len(matches)} potential filenames matching the pattern.")
+                print(f"Found {len(matches)} total filenames matching pattern.")
                 for match_bytes in matches:
                     try:
                         filename_str = match_bytes.decode('ascii')
-                        # ファイル名として使えない文字を置換 (念のため)
                         safe_filename = "".join(c for c in filename_str if c.isalnum() or c in ('_', '.', '-')).strip()
-                        if safe_filename == filename_str: # パターンに合致していれば通常は問題ないはず
-                             filenames.append(safe_filename)
-                             # print(f"  Added filename: {safe_filename}") # デバッグ用
+                        if safe_filename:
+                            filenames.append(safe_filename)
                         else:
-                             print(f"  Warning: Filename potentially altered for safety: '{filename_str}' -> '{safe_filename}'")
-                             filenames.append(safe_filename) # 変更後の名前を追加
+                             print(f"  Warning: Empty or invalid filename generated from: {filename_str}")
                     except UnicodeDecodeError:
-                        print(f"  Warning: Skipping non-ASCII match: {match_bytes}")
+                         print(f"  Warning: Skipping non-ASCII match: {match_bytes}")
             else:
-                 print("Warning: No filenames matching the specified pattern found in the metadata file.")
-                 print(f"         File checked: {metadata_path}")
+                 print("Warning: No filenames matching pattern found in metadata.")
                  print(f"         Pattern used: {filename_pattern.decode('ascii', errors='replace')}")
-                 print("         If filenames exist in a different format, please adjust the 'filename_pattern' variable.")
 
-            print(f"Finished extracting filenames. Found {len(filenames)} valid names matching the pattern.")
-
+            print(f"Finished metadata scan. Extracted {len(filenames)} filenames.")
     except FileNotFoundError:
         print(f"Error: Metadata file not found at {metadata_path}")
         return []
     except Exception as e:
         print(f"An unexpected error occurred during metadata filename extraction: {e}")
         return []
-
     return filenames
 
-
-def extract_wav_files(wav_data_path, output_dir, filenames):
+def extract_se_files_by_riff_type(data_path, output_dir, all_filenames):
     """
-    WAV本体データをスキャンし、RIFFヘッダに基づいてファイルを分割・保存する関数。
-    ファイル名は提供されたリストを順番に使用する。
+    本体データをRIFFスキャンし、フォームタイプ(WAVE or DMSG/DMUS)に応じて
+    メタデータのファイル名リスト(.wav用と.sgt用に分けて)から名前を割り当てて抽出する。
     """
-    print(f"\nStarting WAV extraction based on RIFF header scan: {wav_data_path}")
-    if not filenames:
-        print("Error: No filenames provided from metadata. Cannot proceed.")
+    print(f"\nStarting SE file extraction (RIFF Scan by Type): {data_path}")
+    if not all_filenames:
+        print("Error: No filenames provided from metadata.")
         return
+
+    # ファイル名リストを .wav と .sgt に分割 (順番は維持)
+    wav_filenames = [name for name in all_filenames if name.lower().endswith(".wav")]
+    sgt_filenames = [name for name in all_filenames if name.lower().endswith(".sgt")]
+    print(f"Found {len(wav_filenames)} '.wav' and {len(sgt_filenames)} '.sgt' filenames in metadata.")
 
     # 出力ディレクトリ作成
     if not os.path.exists(output_dir):
@@ -77,175 +67,196 @@ def extract_wav_files(wav_data_path, output_dir, filenames):
             print(f"Error creating output directory {output_dir}: {e}")
             return
 
-    extracted_count = 0
+    extracted_wav_count = 0
+    extracted_sgt_count = 0
     error_count = 0
-    filename_index = 0
-    current_pos = 0 # WAV本体データ内の現在のスキャン位置
+    wav_filename_index = 0 # .wavリスト用インデックス
+    sgt_filename_index = 0 # .sgtリスト用インデックス
+    riff_chunks_found = 0
+
+    # SGTファイルのフォームタイプ候補 (大文字/小文字を考慮しないようにバイトで定義)
+    SGT_FORM_TYPE_DMSG = b'DMSG'
+    SGT_FORM_TYPE_DMUS = b'DMUS' # こちらもチェック対象に入れるか？ まずはDMSGのみで試す
 
     try:
-        with open(wav_data_path, 'rb') as f_wav_data:
-            file_size = os.path.getsize(wav_data_path)
-            print(f"Total size of WAV data file: {file_size} bytes")
+        with open(data_path, 'rb') as f_data:
+            data_file_size = os.path.getsize(data_path)
+            print(f"Scanning data file (Size: {data_file_size} bytes) for RIFF headers...")
+            current_pos = 0
 
-            while current_pos < file_size:
-                f_wav_data.seek(current_pos)
-                # まずRIFF ID (4バイト) を読む
-                riff_id = f_wav_data.read(4)
-                if len(riff_id) < 4:
-                    if len(riff_id) > 0: # ファイル末尾にRIFF ID未満のデータが残っている場合
-                        print(f"Reached end of file with {len(riff_id)} remaining bytes.")
-                    break # ファイル終端
+            while current_pos < data_file_size:
+                f_data.seek(current_pos)
+                riff_id = f_data.read(4)
+                if len(riff_id) < 4: break
 
                 if riff_id == b'RIFF':
-                    # RIFFヘッダが見つかった場合、サイズ情報 (次の4バイト) + WAVE ID等(4バイト)を読む
-                    header_rest = f_wav_data.read(8) # Size(4) + Format(4)
+                    riff_chunks_found += 1
+                    header_rest = f_data.read(8) # Size(4) + Format(4)
                     if len(header_rest) < 8:
-                         print(f"Warning: Found RIFF at {current_pos}, but cannot read full header (size/format). Skipping.")
-                         current_pos += 4 # RIFF ID分だけ進む
-                         continue
+                        print(f"Warning: Found RIFF at offset {current_pos}, but incomplete header. Skipping.")
+                        current_pos += 4
+                        continue
 
                     try:
-                        # chunk_size は RIFFヘッダのID(4) + Size(4) を除く、ファイル全体のサイズ
-                        chunk_size_bytes = header_rest[0:4]
-                        chunk_size = struct.unpack('<I', chunk_size_bytes)[0]
-                        # WAVファイル全体のサイズは chunk_size + 8
-                        total_wav_size = chunk_size + 8
-                        # WAVE ID (通常 'WAVE')
-                        wave_id = header_rest[4:8]
+                        chunk_size = struct.unpack('<I', header_rest[0:4])[0]
+                        form_type = header_rest[4:8]
+                        total_file_size = chunk_size + 8
 
-                        print(f"\nFound RIFF header at offset: {current_pos}")
-                        print(f"  Declared chunk size (file size - 8): {chunk_size}, Calculated Total WAV size: {total_wav_size}")
-                        if wave_id == b'WAVE':
-                            print("  Format: WAVE")
-                        else:
-                            print(f"  Format: {wave_id} (Not standard WAVE, but processing anyway)")
+                        print(f"\nFound RIFF chunk #{riff_chunks_found} at offset: {current_pos}")
+                        print(f"  Declared chunk size (file size - 8): {chunk_size}, Calculated Total size: {total_file_size}")
+                        print(f"  Form Type: {form_type}")
 
-
-                        # サイズの妥当性チェック
-                        if total_wav_size <= 12: # RIFF(4)+Size(4)+WAVE(4) より小さいのはおかしい
-                            print(f"  Warning: Invalid total size ({total_wav_size}) calculated (must be > 12). Skipping this RIFF header.")
-                            current_pos += 1 # 1バイトずらして再検索
+                        # サイズ妥当性チェック
+                        if total_file_size <= 8: # RIFF ID+Size より小さいのはおかしい
+                            print(f"  Warning: Invalid total size ({total_file_size}). Skipping.")
+                            error_count += 1
+                            current_pos += 1 # 1バイトずらす
                             continue
-                        if current_pos + total_wav_size > file_size:
-                            print(f"  Warning: Calculated WAV end position ({current_pos + total_wav_size}) exceeds data file size ({file_size}). Adjusting size.")
-                            total_wav_size = file_size - current_pos # 残り全部を読み取る
-                            if total_wav_size <= 0:
+                        if current_pos + total_file_size > data_file_size:
+                            print(f"  Warning: Declared size exceeds EOF. Adjusting size.")
+                            total_file_size = data_file_size - current_pos
+                            if total_file_size <= 0:
                                 print("  Error: Adjusted size is zero or negative. Stopping.")
                                 break
 
-                        # ファイル名を取得
-                        if filename_index >= len(filenames):
-                            print(f"Error: Found more RIFF chunks ({extracted_count + 1}) than filenames ({len(filenames)}). Stopping extraction.")
-                            error_count += 1
-                            break
+                        current_filename = None
+                        is_wav = False
+                        is_sgt = False
 
-                        current_filename = filenames[filename_index]
-                        # ファイル名の拡張子を確認 (ファイルの種類が混在している場合のため)
-                        expected_ext = ".wav" if wave_id == b'WAVE' else ".bin" # WAVEでなければ .bin とする (仮)
-                        if not current_filename.lower().endswith(expected_ext) and expected_ext == ".wav":
-                             print(f"Warning: Filename '{current_filename}' from metadata does not end with expected '.wav'.")
-                        elif not current_filename.lower().endswith(".sgt") and wave_id != b'WAVE':
-                             # sgt ファイルのRIFF構造は不明なため、警告のみ
-                             print(f"Warning: Filename '{current_filename}' doesn't end with .sgt, but RIFF chunk format is not 'WAVE'.")
-
-
-                        output_path = os.path.join(output_dir, current_filename)
-                        print(f"  Attempting to save as: {output_path} (Size: {total_wav_size})")
-
-                        # WAVデータを読み込んで保存
-                        f_wav_data.seek(current_pos) # ヘッダの先頭に戻る
-                        wav_content = f_wav_data.read(total_wav_size)
-                        read_size = len(wav_content)
-
-                        if read_size != total_wav_size:
-                            print(f"  Warning: Read {read_size} bytes, expected {total_wav_size}. File might be truncated.")
-                        if read_size == 0:
-                             print("  Error: Read 0 bytes. Skipping.")
-                             error_count += 1
-                             current_pos += 1 # 1バイト進めて再試行
+                        # フォームタイプに応じてファイル名を割り当て
+                        if form_type == b'WAVE':
+                            if wav_filename_index < len(wav_filenames):
+                                current_filename = wav_filenames[wav_filename_index]
+                                is_wav = True
+                            else:
+                                print(f"Error: Found WAVE chunk but no more '.wav' filenames available (Index {wav_filename_index}). Stopping.")
+                                error_count += 1
+                                break
+                        elif form_type == SGT_FORM_TYPE_DMSG or form_type == SGT_FORM_TYPE_DMUS: # DMSG または DMUS をチェック
+                            if sgt_filename_index < len(sgt_filenames):
+                                current_filename = sgt_filenames[sgt_filename_index]
+                                is_sgt = True
+                            else:
+                                print(f"Error: Found {form_type} chunk but no more '.sgt' filenames available (Index {sgt_filename_index}). Stopping.")
+                                error_count += 1
+                                break
+                        else:
+                             print(f"  Warning: Unknown or unsupported RIFF Form Type '{form_type}'. Skipping this chunk.")
+                             # 不明なチャンクをスキップ
+                             current_pos += max(1, total_file_size) if total_file_size > 0 else 1
                              continue
 
-                        with open(output_path, 'wb') as f_out:
-                            f_out.write(wav_content)
-                        print(f"  Successfully saved {read_size} bytes to: {output_path}")
-                        extracted_count += 1
-                        filename_index += 1
+                        # ファイル名が割り当てられた場合のみ処理
+                        if current_filename:
+                            output_path = os.path.join(output_dir, current_filename)
+                            print(f"  Assigning filename: {current_filename}")
+                            print(f"  Attempting to save as: {output_path} (Size: {total_file_size})")
 
-                        # 次の検索開始位置へ (現在のWAVファイルの直後)
-                        current_pos += total_wav_size
+                            # 抽出と保存
+                            f_data.seek(current_pos)
+                            content = f_data.read(total_file_size)
+                            read_size = len(content)
+
+                            if read_size != total_file_size: print(f"  Warning: Read {read_size} bytes, expected {total_file_size}.")
+                            if read_size == 0:
+                                 print("  Error: Read 0 bytes. Skipping file.")
+                                 error_count += 1
+                                 current_pos += 1
+                                 # ファイル名インデックスは進めない
+                                 continue
+
+                            with open(output_path, 'wb') as f_out:
+                                f_out.write(content)
+                            print(f"  Successfully saved {read_size} bytes.")
+
+                            # カウントとインデックスを進める
+                            if is_wav:
+                                extracted_wav_count += 1
+                                wav_filename_index += 1
+                            elif is_sgt:
+                                extracted_sgt_count += 1
+                                sgt_filename_index += 1
+
+                            # 次の検索位置へ
+                            current_pos += total_file_size
+
+                        else: # このフローには通常到達しないはず
+                             print(f"  Internal logic error: Filename not assigned for chunk at {current_pos}. Skipping.")
+                             error_count += 1
+                             current_pos += max(1, total_file_size) if total_file_size > 0 else 1
+
 
                     except struct.error as e:
-                        print(f"  Error unpacking size at offset {current_pos + 4}: {e}. Skipping.")
+                        print(f"  Error unpacking RIFF size at offset {current_pos + 4}: {e}. Skipping.")
+                        error_count += 1
                         current_pos += 1
                     except IOError as e:
-                         print(f"  Error reading/writing file {current_filename}: {e}")
+                         print(f"  Error reading/writing file {current_filename if current_filename else 'N/A'}: {e}")
                          error_count += 1
                          current_pos += 1
                     except Exception as e:
-                         print(f"  An unexpected error occurred processing RIFF chunk at {current_pos}: {e}")
+                         print(f"  Unexpected error processing RIFF chunk at {current_pos}: {e}")
                          error_count += 1
                          current_pos += 1
-
                 else:
-                    # RIFFヘッダではなかった -> 次のバイトへ
-                    # print(f"No RIFF at {current_pos}") # デバッグ用
+                    # RIFFヘッダではなかった場合、1バイト進める
                     current_pos += 1
 
-            # --- ループ終了後のサマリー表示 ---
-            print("-" * 30)
-            print(f"Extraction summary (RIFF Scan):")
-            print(f"  Successfully extracted: {extracted_count} files")
-            print(f"  Errors/Warnings during scan: {error_count}") # エラーカウント名を変更
-            print(f"  Filenames processed: {filename_index}/{len(filenames) if filenames else 'N/A'}")
-
-            # ファイル数とファイル名リストの数の比較
-            if filenames: # ファイル名リストがある場合のみ比較
-                if extracted_count < len(filenames):
-                    print(f"Warning: Extracted {extracted_count} files, but {len(filenames)} filenames were found in metadata.")
-                    print("         Some files listed in metadata might not have been found in the data file, or errors occurred.")
-                elif extracted_count > len(filenames):
-                    print(f"Warning: Extracted {extracted_count} files, which is MORE than the {len(filenames)} filenames found in metadata.")
-                    print("         The data file might contain extra RIFF chunks not listed in the metadata.")
+            print(f"\nFinished scanning data file. Found {riff_chunks_found} RIFF chunks total.")
 
     except FileNotFoundError:
-        print(f"Error: WAV data file not found at {wav_data_path}")
+        print(f"Error: Data file not found at {data_path}")
+        return
     except OSError as e:
-         print(f"Error opening or reading the WAV data file {wav_data_path}: {e}")
+        print(f"Error opening or reading the data file {data_path}: {e}")
+        return
     except Exception as e:
-        print(f"An unexpected error occurred during the extraction process: {e}")
+        print(f"An unexpected error occurred: {e}")
+        return
+
+    # --- 最終サマリー ---
+    print("-" * 30)
+    print(f"Extraction Summary (RIFF Scan by Type):")
+    print(f"  Successfully extracted: {extracted_wav_count} WAV files, {extracted_sgt_count} SGT files (Total: {extracted_wav_count + extracted_sgt_count})")
+    print(f"  Total RIFF chunks found: {riff_chunks_found}")
+    print(f"  Total '.wav' filenames in metadata: {len(wav_filenames)}")
+    print(f"  Total '.sgt' filenames in metadata: {len(sgt_filenames)}")
+    print(f"  Errors encountered: {error_count}")
+    # ファイル数とファイル名リストの数の比較に関する警告
+    if extracted_wav_count != len(wav_filenames):
+        print("Warning: The number of extracted WAV files does not match the number of '.wav' filenames in the metadata.")
+    if extracted_sgt_count != len(sgt_filenames):
+        print("Warning: The number of extracted SGT files does not match the number of '.sgt' filenames in the metadata.")
 
 
 # --- スクリプト実行部分 ---
 if __name__ == "__main__":
     # === ファイル名を設定 ===
-    metadata_file = get_path_from_config(config, ini_dir, 'SEExtraction', 'metadata_file')
-    wav_combined_data_file = get_path_from_config(config, ini_dir, 'SEExtraction', 'archive_file')
-    output_directory = get_path_from_config(config, ini_dir, 'SEExtraction', 'output_dir', is_dir=True, create_dir=True)
+    metadata_file = 'bin/SEInfo_002.bin'
+    combined_data_file = 'bin/SE_002.bin'
+    output_directory = 'output/se' # 出力ディレクトリ名変更
     # === 設定ここまで ===
 
     print("="*50)
-    print(" WAV/SGT File Extraction Script (RIFF Scan + Metadata Filenames)")
+    print(" SE File Extraction Script (RIFF Scan by Type + Metadata Filenames)")
     print("="*50)
     print(f"Metadata file:          {os.path.abspath(metadata_file)}")
-    print(f"WAV combined data file: {os.path.abspath(wav_combined_data_file)}")
+    print(f"Combined data file:     {os.path.abspath(combined_data_file)}")
     print(f"Output directory:       {os.path.abspath(output_directory)}")
     print("-" * 50)
 
-    # 必要なファイルが存在するかチェック
     if not os.path.exists(metadata_file):
         print(f"Error: Metadata file '{metadata_file}' not found.")
-        print(f"       Please ensure the file exists or update the 'metadata_file' variable.")
-    elif not os.path.exists(wav_combined_data_file):
-         print(f"Error: WAV combined data file '{wav_combined_data_file}' not found.")
-         print(f"       Please ensure the file exists or update the 'wav_combined_data_file' variable.")
+    elif not os.path.exists(combined_data_file):
+         print(f"Error: Combined data file '{combined_data_file}' not found.")
     else:
-        # 1. メタデータからファイル名リストを取得
-        filenames = get_wav_filenames_from_metadata(metadata_file)
-        # 2. RIFFスキャンを実行してファイル名を付けて保存
-        if filenames: # ファイル名リストが空でなければ実行
-             extract_wav_files(wav_combined_data_file, output_directory, filenames)
+        # 1. メタデータから全てのファイル名を取得
+        all_filenames = get_all_filenames_from_metadata(metadata_file)
+        # 2. RIFFタイプに基づいてファイルを抽出・保存
+        if all_filenames:
+             extract_se_files_by_riff_type(combined_data_file, output_directory, all_filenames)
         else:
-             print("Exiting script because no valid filenames were extracted from the metadata.")
+             print("\nExiting script because no filenames were extracted from the metadata.")
 
     print("-" * 50)
     print("Script finished.")
