@@ -19,3 +19,9 @@ python unpack.py bin/WindowInfo_101.bin bin/Window_101.bin output/window
 * Pythonライブラリ: `pip install numpy Pillow`
 * BlenderのインストールとDragonFFアドオンの有効化
 * `python convert_dff_to_fbx.py "path/to/blender-executable" output/clump output/fbx`
+
+## hexdump生成
+
+`python hexdump.py bin/Clump_128.bin --limit 100`
+
+* limitは出力ファイルのサイズ制限(MB)。引数なしは無制限。
