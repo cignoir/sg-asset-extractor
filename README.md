@@ -1,6 +1,14 @@
 # SG Asset Extractor
 ## 汎用
 ```
+# まとめて
+unpack_all.bat
+```
+
+または
+
+```
+# 個別に
 python unpack.py bin/AnimInfo_024.bin bin/Anim_024.bin output/anim
 python unpack.py bin/ClumpInfo_128.bin bin/Clump_128.bin output/clump
 python unpack.py bin/IdTblInfo_002.bin bin/IdTbl_002.bin output/idtbl
