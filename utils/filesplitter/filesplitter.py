@@ -8,10 +8,10 @@ import argparse
 import platform # OSを判定するためにインポート
 
 # 分割サイズの上限 (バイト単位)
-# 100MB = 100 * 1024 * 1024 bytes
+# 100MB = 100 * 1000 * 1000 bytes (100メガバイト)
 MAX_SIZE = 100 * 1000 * 1000
-# テスト用に小さいサイズにする場合 (例: 1MB)
-# MAX_SIZE = 1 * 1024 * 1024
+# 100MiB (104,857,600 バイト) にしたい場合はこちらを使用
+# MAX_SIZE = 100 * 1024 * 1024
 
 def detect_encoding(filepath):
     """
@@ -74,7 +74,8 @@ def split_file(filepath, max_size):
     try:
         # 元ファイルのディレクトリ、ベース名、拡張子を取得
         file_dir = os.path.dirname(filepath)
-        base_name, ext = os.path.splitext(os.path.basename(filepath))
+        # 元のファイル名を結合してベースとする (例: "myfile.txt")
+        original_filename = os.path.basename(filepath)
 
         # ファイルエンコーディングを推定
         infile_encoding = detect_encoding(filepath)
@@ -107,15 +108,8 @@ def split_file(filepath, max_size):
                         line_bytes = len(encoded_line)
 
                         # --- Windows改行コード (\r\n) の考慮 ---
-                        # Pythonのテキストモード書き込みはWindowsで \n を \r\n に変換する
-                        # readline() は \n または \r\n で終わるため、\n で終わる場合に
-                        # Windows環境では書き込み時に1バイト追加される可能性がある
                         if is_windows and line.endswith('\n') and not line.endswith('\r\n'):
-                             # マルチバイト文字の途中で改行されるケースは稀だが考慮は難しい
-                             # 基本的に行末の\nが\r\nになる分の1バイトを追加計算
                              line_bytes += 1
-                             # print(f"Debug: Adding 1 byte for Windows newline conversion. Original bytes: {len(encoded_line)}, Adjusted: {line_bytes}")
-
 
                     except Exception as e:
                         print(f"警告: 行 '{line[:50]}...' のエンコード中にエラー。スキップします。エラー: {e}")
@@ -124,10 +118,10 @@ def split_file(filepath, max_size):
                     # --- 厳密なサイズチェック ---
                     # 1. この行自体が大きすぎるかチェック
                     if line_bytes > max_size:
-                        print(f"警告: 1行 ({line_bytes / (1024*1024):.2f} MB) が最大サイズ ({max_size / (1024*1024):.2f} MB) を超過。この行はスキップされます。")
+                        print(f"警告: 1行 ({line_bytes / (1024*1024):.2f} MB) が最大サイズ ({max_size / (1000*1000):.2f} MB) を超過。この行はスキップされます。") # MB表示は1000*1000基準に変更
                         if outfile:
                             outfile.close()
-                            print(f"  -> (前のファイルを閉じる) 保存完了: {os.path.basename(output_filepath)} ({current_size / (1024*1024):.2f} MB)")
+                            print(f"  -> (前のファイルを閉じる) 保存完了: {os.path.basename(output_filepath)} ({current_size / (1000*1000):.2f} MB)") # MB表示は1000*1000基準に変更
                             outfile = None
                             current_size = 0
                         continue
@@ -138,13 +132,14 @@ def split_file(filepath, max_size):
                     if start_new_file:
                         if outfile:
                             outfile.close()
-                            print(f"  -> 保存完了: {os.path.basename(output_filepath)} ({current_size / (1024*1024):.2f} MB)")
+                            print(f"  -> 保存完了: {os.path.basename(output_filepath)} ({current_size / (1000*1000):.2f} MB)") # MB表示は1000*1000基準に変更
                             outfile = None
 
-                        output_filename = f"{base_name}_part{part_num}{ext}"
+                        # ★★★ ファイル名の形式を変更 ★★★
+                        # 例: myfile.txt -> myfile.txt.part1.txt
+                        output_filename = f"{original_filename}.part{part_num}.txt"
                         output_filepath = os.path.join(file_dir, output_filename)
                         try:
-                            # 書き込み時も newline='' を指定しない (Pythonに適切な改行コード処理を任せる)
                             outfile = open(output_filepath, 'w', encoding=write_encoding, errors='ignore')
                             print(f"分割ファイル {part_num} を作成中: {os.path.basename(output_filepath)}...")
                             current_size = 0
@@ -170,7 +165,7 @@ def split_file(filepath, max_size):
             # ループ終了後、最後に開いていたファイルを閉じる
             if outfile and not outfile.closed:
                 outfile.close()
-                print(f"  -> 保存完了: {os.path.basename(output_filepath)} ({current_size / (1024*1024):.2f} MB)")
+                print(f"  -> 保存完了: {os.path.basename(output_filepath)} ({current_size / (1000*1000):.2f} MB)") # MB表示は1000*1000基準に変更
 
             print("-" * 30)
             print("ファイルの分割が正常に完了しました。")
@@ -196,7 +191,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="テキストファイルを指定サイズ以下に厳密に分割します。")
     parser.add_argument("filepath", help="分割するテキストファイルのパス")
     parser.add_argument("-s", "--size", type=int, default=MAX_SIZE,
-                        help=f"分割サイズの上限（バイト単位）。デフォルト: {MAX_SIZE} ({MAX_SIZE//(1024*1024)}MB)")
+                        help=f"分割サイズの上限（バイト単位）。デフォルト: {MAX_SIZE} ({MAX_SIZE//(1000*1000)}MB)") # MB表示は1000*1000基準に変更
     parser.add_argument("--wait", action='store_true',
                         help="処理完了後にキー入力を待つ (コンテキストメニューからの実行時は通常不要)")
 
